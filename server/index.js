@@ -16,7 +16,7 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ['https://celadon-quokka-e2e57a.netlify.app']
+      ? ['https://effulgent-pasca-5bb177.netlify.app']
       : ["http://localhost:5173"],
     methods: ["GET", "POST"]
   }
