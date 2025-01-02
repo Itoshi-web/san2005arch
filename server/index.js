@@ -16,7 +16,7 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ['https://effulgent-pasca-5bb177.netlify.app']
+      ? ['https://friendly-jelly-ce7001.netlify.app']
       : ["http://localhost:5173"],
     methods: ["GET", "POST"]
   }
@@ -42,7 +42,9 @@ const initializeGameState = (players) => ({
     cells: Array(players.length).fill({ stage: 0, isActive: false, bullets: 0 })
   })),
   lastRoll: null,
-  gameLog: []
+  gameLog: [],
+  canShoot: false,
+  rolledCell: null
 });
 
 const processGameAction = (room, action, data) => {
@@ -53,7 +55,8 @@ const processGameAction = (room, action, data) => {
     case 'roll': {
       const { value } = data;
       gameState.lastRoll = value;
-
+      gameState.rolledCell = value - 1;
+      
       // First move rule
       if (currentPlayer.firstMove && value !== 1) {
         gameState.gameLog.push({
@@ -61,6 +64,7 @@ const processGameAction = (room, action, data) => {
           player: currentPlayer.username,
           message: `${currentPlayer.username} needs to roll a 1 to start!`
         });
+        gameState.canShoot = false;
         break;
       }
 
@@ -71,8 +75,13 @@ const processGameAction = (room, action, data) => {
       const cellIndex = value - 1;
       const cell = currentPlayer.cells[cellIndex];
 
+      // Check if the cell has a gun with bullets
+      if (cell.isActive && cell.stage === 6 && cell.bullets > 0) {
+        gameState.canShoot = true;
+        return gameState;
+      }
+
       if (!cell.isActive) {
-        // Activate the cell if it's not active
         currentPlayer.cells[cellIndex] = {
           stage: 1,
           isActive: true,
@@ -84,7 +93,6 @@ const processGameAction = (room, action, data) => {
           cell: cellIndex + 1
         });
       } else if (cell.stage < 6) {
-        // Increment stage until max level
         cell.stage += 1;
         if (cell.stage === 6) {
           cell.bullets = 5;
@@ -94,40 +102,33 @@ const processGameAction = (room, action, data) => {
             cell: cellIndex + 1
           });
         }
-      } else if (cell.stage === 6 && cell.bullets === 0) {
-        // Reload bullets if bullets are 0
+      } else if (cell.bullets === 0) {
         cell.bullets = 5;
         gameState.gameLog.push({
           type: 'reload',
           player: currentPlayer.username,
           cell: cellIndex + 1
         });
-      } else if (cell.stage === 6 && cell.bullets > 0) {
-        // Allow the player to shoot if bullets are already filled
-        gameState.gameLog.push({
-          type: 'readyToShoot',
-          player: currentPlayer.username,
-          message: `${currentPlayer.username} can now shoot with their full bullets at cell ${cellIndex + 1}!`
-        });
-        // Prevent turn skip by not advancing the `currentPlayer` here
-        return gameState;
       }
+
+      gameState.canShoot = false;
+      advanceToNextPlayer(gameState);
       break;
     }
 
     case 'shoot': {
-      const { targetPlayer, targetCell, sourceCell } = data;
-      const shooterCell = currentPlayer.cells[sourceCell];
+      const { targetPlayer, targetCell } = data;
+      const sourceCell = currentPlayer.cells[gameState.rolledCell];
       const target = gameState.players[targetPlayer];
 
-      if (shooterCell.bullets > 0) {
+      if (sourceCell.bullets > 0) {
         target.cells[targetCell] = {
           stage: 0,
           isActive: false,
           bullets: 0
         };
 
-        shooterCell.bullets -= 1;
+        sourceCell.bullets -= 1;
 
         gameState.gameLog.push({
           type: 'shoot',
@@ -144,18 +145,23 @@ const processGameAction = (room, action, data) => {
           });
         }
       }
+
+      gameState.canShoot = false;
+      advanceToNextPlayer(gameState);
       break;
     }
   }
 
+  return gameState;
+};
+
+const advanceToNextPlayer = (gameState) => {
   do {
     gameState.currentPlayer = (gameState.currentPlayer + 1) % gameState.players.length;
   } while (
     gameState.players[gameState.currentPlayer].eliminated &&
     gameState.players.some(p => !p.eliminated)
   );
-
-  return gameState;
 };
 
 io.on('connection', (socket) => {
