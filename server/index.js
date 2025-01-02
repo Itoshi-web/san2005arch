@@ -56,20 +56,21 @@ const processGameAction = (room, action, data) => {
       const { value } = data;
       gameState.lastRoll = value;
       gameState.rolledCell = value - 1;
-      
-      // First move rule
-      if (currentPlayer.firstMove && value !== 1) {
-        gameState.gameLog.push({
-          type: 'firstMove',
-          player: currentPlayer.username,
-          message: `${currentPlayer.username} needs to roll a 1 to start!`
-        });
-        gameState.canShoot = false;
-        break;
-      }
 
-      if (currentPlayer.firstMove && value === 1) {
-        currentPlayer.firstMove = false;
+      // First move rule - one attempt per turn
+      if (currentPlayer.firstMove) {
+        if (value !== 1) {
+          gameState.gameLog.push({
+            type: 'firstMove',
+            player: currentPlayer.username,
+            message: `${currentPlayer.username} didn't roll a 1. Next player's turn!`
+          });
+          gameState.canShoot = false;
+          advanceToNextPlayer(gameState);
+          break;
+        } else {
+          currentPlayer.firstMove = false;
+        }
       }
 
       const cellIndex = value - 1;
