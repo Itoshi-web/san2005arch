@@ -16,14 +16,16 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ['https://effulgent-pasca-5bb177.netlify.app']
+      ? ['https://effulgent-pasca-5bb177.netlify.app/']
       : ["http://localhost:5173"],
     methods: ["GET", "POST"]
   }
 });
 
+// Store active rooms and their data
 const rooms = new Map();
 
+// Generate a random 6-digit room ID
 const generateRoomId = () => {
   let roomId;
   do {
@@ -32,19 +34,18 @@ const generateRoomId = () => {
   return roomId;
 };
 
+// Initialize game state for a room
 const initializeGameState = (players) => ({
   currentPlayer: 0,
   players: players.map(p => ({
     id: p.id,
     username: p.username,
     eliminated: false,
-    firstMove: true,
-    cells: Array(players.length).fill({ stage: 0, isActive: false, bullets: 0 })
-  })),
-  lastRoll: null,
-  gameLog: []
+    cells: Array(6).fill({ stage: 0, isActive: false, bullets: 0 })
+  }))
 });
 
+// Process game actions
 const processGameAction = (room, action, data) => {
   const { gameState } = room;
   const currentPlayer = gameState.players[gameState.currentPlayer];
@@ -52,53 +53,25 @@ const processGameAction = (room, action, data) => {
   switch (action) {
     case 'roll': {
       const { value } = data;
-      gameState.lastRoll = value;
-      
-      // First move rule
-      if (currentPlayer.firstMove && value !== 1) {
-        gameState.gameLog.push({
-          type: 'firstMove',
-          player: currentPlayer.username,
-          message: `${currentPlayer.username} needs to roll a 1 to start!`
-        });
-        break;
-      }
-
-      if (currentPlayer.firstMove && value === 1) {
-        currentPlayer.firstMove = false;
-      }
-
       const cellIndex = value - 1;
       const cell = currentPlayer.cells[cellIndex];
 
       if (!cell.isActive) {
+        // Activate new cell
         currentPlayer.cells[cellIndex] = {
           stage: 1,
           isActive: true,
           bullets: 0
         };
-        gameState.gameLog.push({
-          type: 'activate',
-          player: currentPlayer.username,
-          cell: cellIndex + 1
-        });
       } else if (cell.stage < 6) {
+        // Progress cell
         cell.stage += 1;
         if (cell.stage === 6) {
           cell.bullets = 5;
-          gameState.gameLog.push({
-            type: 'maxLevel',
-            player: currentPlayer.username,
-            cell: cellIndex + 1
-          });
         }
       } else if (cell.bullets === 0) {
+        // Refill bullets
         cell.bullets = 5;
-        gameState.gameLog.push({
-          type: 'reload',
-          player: currentPlayer.username,
-          cell: cellIndex + 1
-        });
       }
       break;
     }
@@ -109,33 +82,24 @@ const processGameAction = (room, action, data) => {
       const target = gameState.players[targetPlayer];
 
       if (shooterCell.bullets > 0) {
+        // Reset target cell
         target.cells[targetCell] = {
           stage: 0,
           isActive: false,
           bullets: 0
         };
 
+        // Decrease shooter's bullets
         shooterCell.bullets -= 1;
 
-        gameState.gameLog.push({
-          type: 'shoot',
-          shooter: currentPlayer.username,
-          target: target.username,
-          cell: targetCell + 1
-        });
-
+        // Check if target is eliminated
         target.eliminated = target.cells.every(cell => !cell.isActive);
-        if (target.eliminated) {
-          gameState.gameLog.push({
-            type: 'eliminate',
-            player: target.username
-          });
-        }
       }
       break;
     }
   }
 
+  // Move to next player
   do {
     gameState.currentPlayer = (gameState.currentPlayer + 1) % gameState.players.length;
   } while (
@@ -146,9 +110,15 @@ const processGameAction = (room, action, data) => {
   return gameState;
 };
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
+  // Create a new room
   socket.on('createRoom', ({ maxPlayers, password, username }) => {
     const roomId = generateRoomId();
     const room = {
@@ -178,6 +148,7 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Join a room
   socket.on('joinRoom', ({ roomId, password, username }) => {
     const room = rooms.get(roomId);
     
@@ -218,6 +189,7 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Player ready status change
   socket.on('toggleReady', ({ roomId }) => {
     const room = rooms.get(roomId);
     if (!room) return;
@@ -234,6 +206,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Start game
   socket.on('startGame', ({ roomId }) => {
     const room = rooms.get(roomId);
     if (!room || room.leader !== socket.id) return;
@@ -245,17 +218,19 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle game actions
   socket.on('gameAction', ({ roomId, action, data }) => {
     const room = rooms.get(roomId);
     if (!room || !room.started) return;
 
-    const currentPlayerId = room.gameState.players[room.gameState.currentPlayer].id;
+    const currentPlayerId = room.players[room.gameState.currentPlayer].id;
     if (currentPlayerId !== socket.id) return;
 
     const updatedGameState = processGameAction(room, action, data);
     io.to(roomId).emit('gameStateUpdated', { gameState: updatedGameState });
   });
 
+  // Handle disconnection
   socket.on('disconnect', () => {
     for (const [roomId, room] of rooms.entries()) {
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
