@@ -96,7 +96,7 @@ const processGameAction = (room, action, data) => {
       } else if (cell.stage < 6) {
         cell.stage += 1;
         if (cell.stage === 6) {
-          cell.bullets = 5;
+          cell.bullets = 1;
           gameState.gameLog.push({
             type: 'maxLevel',
             player: currentPlayer.username,
@@ -104,7 +104,7 @@ const processGameAction = (room, action, data) => {
           });
         }
       } else if (cell.bullets === 0) {
-        cell.bullets = 5;
+        cell.bullets = 1;
         gameState.gameLog.push({
           type: 'reload',
           player: currentPlayer.username,
